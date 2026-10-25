@@ -1,0 +1,2 @@
+# Installed by Databricks Apps next to app.yaml. The deployment copies the wheel built by the pipeline next to this file.
+./viewer-0.0.0.dev0-py3-none-any.whl[databricks]

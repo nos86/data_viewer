@@ -1,0 +1,48 @@
+# Databricks Asset Bundle: deploys the viewer as a Databricks App (see docs/databricks.md).
+# Deployed by the pipeline:  databricks bundle deploy -t <staging|production> --var wheel=<file> --var version=<x.y.z>
+bundle:
+  name: viewer
+
+variables:
+  wheel:
+    description: file name of the wheel built by the pipeline (copied next to this file)
+    default: ""
+  version:
+    description: version being deployed (informational)
+    default: ""
+  warehouse_id:
+    description: id of the SQL warehouse that reads the metadata and KVT tables
+  volume_path:
+    description: Unity Catalog Volume folder for uploads, status files and the Parquet cache
+    default: /Volumes/main/measurements/viewer/app
+
+sync:
+  include:
+    - "*.whl"
+    - requirements.txt
+    - app.yaml
+
+resources:
+  apps:
+    viewer_app:
+      name: viewer-${bundle.target}
+      description: Measurement viewer ${var.version}
+      source_code_path: .
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
+
+targets:
+  staging:
+    default: true
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/staging
+    variables:
+      warehouse_id: "<staging warehouse id>"
+  production:
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/production
+    variables:
+      warehouse_id: "<production warehouse id>"

@@ -1,0 +1,38 @@
+# Deploy steps shared by the staging and production stages: bundle deploy, app deploy, smoke check of the version.
+parameters:
+  - name: target
+    type: string
+  - name: host
+    type: string
+  - name: token
+    type: string
+
+steps:
+  - checkout: self                   # deployment jobs do not check out by themselves; the smoke script lives in the repository
+  - download: current
+    artifact: dist
+  - download: current
+    artifact: app
+  - script: |
+      curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+      databricks --version
+    displayName: Install the Databricks CLI
+  - script: |
+      set -euo pipefail
+      WHEEL=$(ls $(Pipeline.Workspace)/dist/viewer-*.whl)
+      VERSION=$(basename "$WHEEL" | cut -d- -f2)
+      cp "$WHEEL" $(Pipeline.Workspace)/app/
+      echo "./$(basename "$WHEEL")[databricks]" > $(Pipeline.Workspace)/app/requirements.txt
+      cd $(Pipeline.Workspace)/app
+      databricks bundle deploy -t ${{ parameters.target }} --var "wheel=$(basename "$WHEEL")" --var "version=$VERSION"
+      databricks bundle run -t ${{ parameters.target }} viewer_app
+      echo "##vso[task.setvariable variable=deployedVersion]$VERSION"
+    displayName: databricks bundle deploy and app deploy (${{ parameters.target }})
+    env:
+      DATABRICKS_HOST: ${{ parameters.host }}
+      DATABRICKS_TOKEN: ${{ parameters.token }}
+  - script: python $(Build.SourcesDirectory)/scripts/databricks_smoke.py --app-url "$(databricks apps get viewer-${{ parameters.target }} -o json | python -c 'import sys,json;print(json.load(sys.stdin)["url"])')" --expect-version "$(deployedVersion)"
+    displayName: Smoke check /api/v1/version
+    env:
+      DATABRICKS_HOST: ${{ parameters.host }}
+      DATABRICKS_TOKEN: ${{ parameters.token }}

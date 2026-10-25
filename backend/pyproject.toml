@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "viewer"
+dynamic = ["version"]   # from the git tag vMAJOR.MINOR.PATCH (hatch-vcs); 0.0.0.dev0 without tags
+description = "Measurement viewer: FastAPI backend with the built Vue frontend"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "numpy>=1.26",
+    "pandas>=2.2",      # extractor output, tz_localize(ambiguous='infer')
+    "pyarrow>=15",      # Parquet row-group writer, Arrow results of the warehouse
+    "duckdb>=1.0",      # external sort with memory limit + spill, channel reads
+    "psutil>=5.9",      # liveness check of the ingestion process (stateless backend)
+]
+
+[project.optional-dependencies]
+delta = ["deltalake>=0.17"]                       # metadata/KVT as local Delta tables (VIEWER_METADATA_DIR, VIEWER_KVT_DIR)
+databricks = ["databricks-sdk>=0.30", "databricks-sql-connector>=3.3"]   # VIEWER_ADAPTER=databricks
+dev = ["pytest>=8", "httpx>=0.27", "deltalake>=0.17", "pyyaml>=6", "build>=1.2"]
+
+[project.scripts]
+viewer = "viewer.cli:main"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "..", local_scheme = "no-local-version", fallback_version = "0.0.0.dev0", tag_regex = "^v(?P<version>\\d+\\.\\d+\\.\\d+.*)$" }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/viewer"]
+# the built frontend (scripts/build_frontend.py copies frontend/dist here) is git-ignored but belongs in the wheel
+artifacts = ["src/viewer/static/**"]
+
+[tool.hatch.build.targets.sdist]
+artifacts = ["src/viewer/static/**"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore:Arrow output on a DB-API result:UserWarning"]

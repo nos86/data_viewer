@@ -1,0 +1,111 @@
+# Test on every push/PR, build the wheel, deploy on version tags vMAJOR.MINOR.PATCH (staging, then production after approval).
+# Variable group `viewer-databricks` must define: DATABRICKS_HOST_STAGING, DATABRICKS_HOST_PRODUCTION (and the secrets
+# DATABRICKS_TOKEN_STAGING, DATABRICKS_TOKEN_PRODUCTION, or use a workload-identity service connection instead).
+trigger:
+  branches:
+    include: [main, dev]
+  tags:
+    include: ['v*.*.*']
+pr:
+  branches:
+    include: [main]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: viewer-databricks
+  - name: isRelease
+    value: $[startsWith(variables['Build.SourceBranch'], 'refs/tags/v')]
+
+stages:
+  - stage: Test
+    jobs:
+      - job: Backend
+        strategy:
+          matrix:
+            py311: { python.version: '3.11' }
+            py312: { python.version: '3.12' }
+        steps:
+          - checkout: self
+            fetchDepth: 0           # hatch-vcs needs the tags
+          - task: UsePythonVersion@0
+            inputs: { versionSpec: '$(python.version)' }
+          - script: pip install -e "backend[dev]"
+            displayName: Install
+          - script: python -m pytest backend --junitxml=$(Build.ArtifactStagingDirectory)/junit.xml
+            displayName: pytest (unit, contract, API)
+          - task: PublishTestResults@2
+            condition: always()
+            inputs: { testResultsFiles: '$(Build.ArtifactStagingDirectory)/junit.xml', testRunTitle: 'backend py$(python.version)' }
+      - job: Frontend
+        steps:
+          - task: NodeTool@0
+            inputs: { versionSpec: '22.x' }
+          - script: npm ci
+            workingDirectory: frontend
+            displayName: Install
+          - script: npm test
+            workingDirectory: frontend
+            displayName: vitest
+          - script: npm run build
+            workingDirectory: frontend
+            displayName: Type check and build
+      - job: Pipeline
+        steps:
+          - task: UsePythonVersion@0
+            inputs: { versionSpec: '3.12' }
+          - script: python scripts/release_check.py --ref "$(Build.SourceBranch)"
+            displayName: Check the release tag (format, newer than the last one)
+
+  - stage: Build
+    dependsOn: Test
+    jobs:
+      - job: Wheel
+        steps:
+          - checkout: self
+            fetchDepth: 0
+          - task: UsePythonVersion@0
+            inputs: { versionSpec: '3.12' }
+          - task: NodeTool@0
+            inputs: { versionSpec: '22.x' }
+          - script: pip install build hatch-vcs hatchling
+            displayName: Install build tools
+          - script: python scripts/build_frontend.py
+            displayName: Build the frontend into the package
+          - script: python -m build backend --outdir $(Build.ArtifactStagingDirectory)/dist --no-isolation
+            displayName: Wheel and sdist (version from the tag)
+          - script: python scripts/release_check.py --wheel $(Build.ArtifactStagingDirectory)/dist/*.whl
+            displayName: Wheel contains the frontend
+          - publish: $(Build.ArtifactStagingDirectory)/dist
+            artifact: dist
+          - script: mkdir -p $(Build.ArtifactStagingDirectory)/app && cp databricks.yml app.yaml requirements.txt $(Build.ArtifactStagingDirectory)/app/
+            displayName: Collect the files of the Databricks App
+          - publish: $(Build.ArtifactStagingDirectory)/app
+            artifact: app
+
+  - stage: Staging
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables.isRelease, true))
+    jobs:
+      - deployment: Staging
+        environment: viewer-staging
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: azure-pipelines-deploy.yml
+                  parameters: { target: staging, host: '$(DATABRICKS_HOST_STAGING)', token: '$(DATABRICKS_TOKEN_STAGING)' }
+
+  - stage: Production
+    dependsOn: Staging
+    condition: and(succeeded(), eq(variables.isRelease, true))
+    jobs:
+      - deployment: Production
+        environment: viewer-production     # configure the approvals and checks on this environment
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: azure-pipelines-deploy.yml
+                  parameters: { target: production, host: '$(DATABRICKS_HOST_PRODUCTION)', token: '$(DATABRICKS_TOKEN_PRODUCTION)' }

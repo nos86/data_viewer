@@ -1,0 +1,21 @@
+# Databricks App definition (see docs/databricks.md). The wheel is installed through requirements.txt.
+command: ["viewer", "serve", "--host", "0.0.0.0", "--port", "8000", "--no-browser"]
+env:
+  - name: VIEWER_ADAPTER
+    value: databricks
+  - name: VIEWER_LOG_FORMAT
+    value: json
+  - name: VIEWER_DBX_HOST
+    value: "https://<workspace>.azuredatabricks.net"
+  - name: VIEWER_DBX_WAREHOUSE_ID
+    valueFrom: sql-warehouse          # app resource `sql-warehouse` (CAN_USE); the http path is derived from its id
+  - name: VIEWER_DBX_METADATA_TABLE
+    value: main.measurements.metadata
+  - name: VIEWER_DBX_KVT_TABLE
+    value: main.measurements.kvt
+  - name: VIEWER_DBX_VOLUME_PATH
+    value: /Volumes/main/measurements/viewer/app
+  - name: VIEWER_LOCAL_CACHE_DIR
+    value: /tmp/viewer-cache
+  - name: VIEWER_STORAGE_LIMIT_GB
+    value: "20"
